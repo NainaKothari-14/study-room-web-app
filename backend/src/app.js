@@ -6,9 +6,13 @@ const fileRoutes = require('./routes/files')
 const app = express()
 
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
-  credentials: true,
+  origin: [
+    "http://localhost:5173",
+    process.env.CLIENT_URL
+  ],
+  credentials: true
 }))
+
 app.use(express.json())
 
 // Routes
