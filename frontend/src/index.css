@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; margin: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: #0a0a0f;
+    color: #f0f0f8;
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: #111118; }
+  ::-webkit-scrollbar-thumb { background: #252530; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #7c3aed; }
+}
+
+@layer components {
+  .glass {
+    background: rgba(24,24,31,0.85);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.07);
+  }
+  .glow-violet { box-shadow: 0 0 40px rgba(124,58,237,0.2), 0 0 80px rgba(124,58,237,0.08); }
+  .text-gradient {
+    background: linear-gradient(135deg, #a78bfa 0%, #ec4899 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .btn-grad {
+    background: linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #ec4899 100%);
+    color: white;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: opacity 0.15s, transform 0.15s;
+  }
+  .btn-grad:hover { opacity: 0.92; }
+  .btn-grad:active { transform: scale(0.97); }
+
+  .avatar-ring {
+    background: linear-gradient(135deg, #7c3aed, #ec4899, #06b6d4);
+    padding: 2.5px;
+    border-radius: 9999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .avatar-ring-inner {
+    background: #18181f;
+    border-radius: 9999px;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .input-field {
+    width: 100%;
+    background: #111118;
+    border: 1.5px solid #252530;
+    border-radius: 16px;
+    padding: 14px 20px;
+    color: #f0f0f8;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-size: 16px;
+    outline: none;
+    transition: border-color 0.2s;
+    caret-color: #a78bfa;
+  }
+  .input-field::placeholder { color: #55556a; }
+  .input-field:focus { border-color: #7c3aed; }
+}
+
+/* Animations */
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.88); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes tile-in {
+  from { opacity: 0; transform: scale(0.93); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes float-up {
+  0%   { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-90px) scale(1.6); }
+}
+@keyframes pulse-ring {
+  0%,100% { box-shadow: 0 0 0 0 rgba(124,58,237,0.45); }
+  50%      { box-shadow: 0 0 0 8px rgba(124,58,237,0); }
+}
+@keyframes shimmer-bg {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.anim-slide-up  { animation: slide-up 0.55s cubic-bezier(0.16,1,0.3,1) both; }
+.anim-fade      { animation: fade-in 0.4s ease both; }
+.anim-scale     { animation: scale-in 0.3s cubic-bezier(0.16,1,0.3,1) both; }
+.tile-enter     { animation: tile-in 0.35s cubic-bezier(0.16,1,0.3,1) both; }
+.reaction-float { animation: float-up 1.8s ease-out forwards; }
+.speaking       { animation: pulse-ring 1.2s ease infinite; }
+
+.d-100 { animation-delay: 0.1s; }
+.d-200 { animation-delay: 0.2s; }
+.d-300 { animation-delay: 0.3s; }
+
+/* Noise overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9998;
+}
