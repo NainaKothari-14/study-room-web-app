@@ -8,7 +8,7 @@ let socketInstance = null
 
 function getSocket() {
   if (!socketInstance) {
-    socketInstance = io(import.meta.env.VITE_SERVER_URL || 'http://localhost:5000', {
+    socketInstance = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000', {
       transports: ['websocket'],
       autoConnect: true,
       reconnectionAttempts: 10,
