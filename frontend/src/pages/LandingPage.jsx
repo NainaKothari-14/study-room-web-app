@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { generateRoomId, generateUserId } from '../utils/roomUtils'
 import { useRoomContext } from '../context/RoomContext'
-import { PRESET_AVATARS, getNameGradient, getInitial } from '../utils/avatarUtils'
+import { PRESET_AVATARS, getNameGradient, getInitial } from '../utils/Avatarutils'
 
 // ── pure-CSS design tokens so nothing depends on Tailwind custom config ────────
 const C = {
