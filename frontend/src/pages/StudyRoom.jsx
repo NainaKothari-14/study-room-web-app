@@ -9,7 +9,7 @@ import VideoGrid from '../components/Room/VideoGrid'
 import ControlBar from '../components/Room/ControlBar'
 import ParticipantList from '../components/Room/ParticipantList'
 import ChatPanel from '../components/Chat/ChatPanel'
-import FilePanel from '../components/Files/FilePanel'
+import FilePanel from '../components/Files/FilePanel' 
 import EmojiReactions from '../components/Reactions/Emojireactions '
 import { getRoomUrl } from '../utils/roomUtils'
 
@@ -18,40 +18,41 @@ export default function StudyRoom() {
   const navigate   = useNavigate()
   const { socket } = useSocketContext()
   const {
-    localUser,
-    isMicOn,  setIsMicOn,
-    isCamOn,  setIsCamOn,
+    localUser, isMicOn, isCamOn,
+    setIsMicOn, setIsCamOn,
     isScreenSharing, setIsScreenSharing,
     reactions,
   } = useRoomContext()
-
   const { joinRoom, leaveRoom, sendMessage, sendReaction, shareFile } = useSocket()
-  const { localStream, getMedia, toggleMic, toggleCam, startScreenShare, stopScreenShare, stopAll } = useMediaDevices()
+  const {
+    localStream, getMedia,
+    toggleMic, toggleCam,
+    startScreenShare, stopScreenShare, stopAll,
+  } = useMediaDevices()
 
-  const [activeStream,    setActiveStream]    = useState(null)
-  const [activePanel,     setActivePanel]     = useState('chat')
-  const [copied,          setCopied]          = useState(false)
-  const [screenSharerId,  setScreenSharerId]  = useState(null)
-  const [mediaReady,      setMediaReady]      = useState(false)
+  const [activeStream,   setActiveStream]   = useState(null)
+  const [activePanel,    setActivePanel]    = useState('chat')
+  const [copied,         setCopied]         = useState(false)
+  const [screenSharerId, setScreenSharerId] = useState(null)
 
   const { remoteStreams, replaceVideoTrack } = useWebRTC(roomId, localUser?.id, activeStream, localUser)
 
-  // ── Boot ─────────────────────────────────────────────────────────────────────
+  // ── Boot: get camera first, then join ────────────────────────────────────────
   useEffect(() => {
     if (!localUser) { navigate('/'); return }
-    getMedia(true, true).then(stream => {
-      if (stream) { setActiveStream(stream); setMediaReady(true) }
+    getMedia(true, true).then((stream) => {
+      if (stream) setActiveStream(stream)
       joinRoom(roomId, localUser)
     })
     return () => { leaveRoom(roomId, localUser?.id); stopAll() }
   }, []) // eslint-disable-line
 
-  // ── Screen share broadcast from others ───────────────────────────────────────
+  // ── Listen for screen share from other users ──────────────────────────────────
   useEffect(() => {
     if (!socket) return
-    const h = ({ userId, sharing }) => setScreenSharerId(sharing ? userId : null)
-    socket.on('room:screenshare', h)
-    return () => socket.off('room:screenshare', h)
+    const handler = ({ userId, sharing }) => setScreenSharerId(sharing ? userId : null)
+    socket.on('room:screenshare', handler)
+    return () => socket.off('room:screenshare', handler)
   }, [socket])
 
   // ── Controls ──────────────────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ export default function StudyRoom() {
     const next = !isMicOn
     setIsMicOn(next)
     toggleMic(next)
-    socket?.emit('mic:state', { roomId, from: localUser?.id, isMicOn: next })
+    socket?.emit('mic:state', { roomId, from: localUser?.id, isMicOn: next, name: localUser?.name, avatar: localUser?.avatar })
   }
 
   const handleToggleCam = async () => {
@@ -67,33 +68,40 @@ export default function StudyRoom() {
     setIsCamOn(next)
     const updated = await toggleCam(next)
     if (updated) { setActiveStream(updated); replaceVideoTrack(updated) }
-    socket?.emit('cam:state', { roomId, from: localUser?.id, isCamOn: next })
+    socket?.emit('cam:state', { roomId, from: localUser?.id, isCamOn: next, name: localUser?.name, avatar: localUser?.avatar })
   }
 
   const handleScreenShare = async () => {
     if (isScreenSharing) {
+      // ── Stop ────────────────────────────────────────────────────────────────
       stopScreenShare()
       setIsScreenSharing(false)
-      setActiveStream(localStream)
-      replaceVideoTrack(localStream)
       setScreenSharerId(null)
+      setActiveStream(localStream)
+      replaceVideoTrack(localStream)        // push camera back to all peers
       socket?.emit('room:screenshare', { roomId, userId: localUser?.id, sharing: false })
     } else {
+      // ── Start ───────────────────────────────────────────────────────────────
       if (screenSharerId && screenSharerId !== localUser?.id) {
-        return alert('Someone else is sharing. Wait for them to stop.')
+        return alert('Someone else is sharing their screen.')
       }
       const ss = await startScreenShare()
       if (!ss) return
+
+      // Handle browser "Stop sharing" button
       ss.getVideoTracks()[0]?.addEventListener('ended', () => {
-        stopScreenShare(); setIsScreenSharing(false)
-        setActiveStream(localStream); replaceVideoTrack(localStream)
+        stopScreenShare()
+        setIsScreenSharing(false)
         setScreenSharerId(null)
+        setActiveStream(localStream)
+        replaceVideoTrack(localStream)
         socket?.emit('room:screenshare', { roomId, userId: localUser?.id, sharing: false })
       })
+
       setIsScreenSharing(true)
-      setActiveStream(ss)
-      replaceVideoTrack(ss)
       setScreenSharerId(localUser?.id)
+      setActiveStream(ss)
+      replaceVideoTrack(ss)                 // push screen track to all peers
       socket?.emit('room:screenshare', { roomId, userId: localUser?.id, sharing: true })
     }
   }
@@ -108,37 +116,35 @@ export default function StudyRoom() {
   const isSomeoneElseSharing = screenSharerId && screenSharerId !== localUser?.id
 
   return (
-    <div className="h-screen bg-s-bg flex flex-col overflow-hidden">
+    <div style={{ height: '100vh', background: '#0a0a0f', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Top bar */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-s-border glass">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl btn-grad flex items-center justify-center text-base">📚</div>
-          <span className="font-display font-bold text-s-text text-lg tracking-tight">StudySync</span>
-          <div className="w-px h-4 bg-s-border" />
-          <span className="font-mono text-s-muted text-xs">{roomId}</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 20px', borderBottom: '1px solid #252530', background: '#111118', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg,#7c3aed,#ec4899)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>📚</div>
+          <span style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, color: '#f0f0f8', fontSize: 18 }}>StudySync</span>
+          <div style={{ width: 1, height: 16, background: '#252530' }} />
+          <span style={{ fontFamily: "'JetBrains Mono',monospace", color: '#55556a', fontSize: 12 }}>{roomId}</span>
         </div>
-
-        <div className="flex items-center gap-3">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {isSomeoneElseSharing && (
-            <span className="text-violet-400 text-xs font-body bg-s-violet/10 px-3 py-1.5 rounded-full border border-s-violet/20 animate-pulse">
+            <span style={{ color: '#a78bfa', fontSize: 12, background: 'rgba(124,58,237,0.1)', padding: '4px 10px', borderRadius: 20, border: '1px solid rgba(124,58,237,0.2)', fontFamily: "'Plus Jakarta Sans',sans-serif" }}>
               🖥️ Screen being shared
             </span>
           )}
-          <button onClick={copyLink}
-            className="flex items-center gap-2 text-xs font-body px-4 py-2 rounded-xl bg-s-card border border-s-border hover:border-violet-500 text-s-dim hover:text-s-text transition-all">
+          <button onClick={copyLink} style={{ background: '#18181f', border: '1px solid #252530', color: '#8888a8', cursor: 'pointer', fontSize: 13, padding: '6px 14px', borderRadius: 10, fontFamily: "'Plus Jakarta Sans',sans-serif", transition: 'all 0.15s' }}>
             {copied ? '✅ Copied!' : '🔗 Invite'}
           </button>
         </div>
       </div>
 
       {/* Main */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 flex flex-col overflow-hidden">
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <VideoGrid
             localStream={activeStream}
             remoteStreams={remoteStreams}
             localUser={localUser}
-            isCamOn={isCamOn}
+            isCamOn={isScreenSharing ? true : isCamOn}
             isMicOn={isMicOn}
             isScreenSharing={isScreenSharing}
           />
@@ -158,7 +164,7 @@ export default function StudyRoom() {
         </div>
 
         {/* Side panel */}
-        <div className="w-80 border-l border-s-border flex flex-col bg-s-surface overflow-hidden">
+        <div style={{ width: 320, borderLeft: '1px solid #252530', background: '#111118', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0 }}>
           {activePanel === 'chat'         && <ChatPanel roomId={roomId} localUser={localUser} onSend={sendMessage} />}
           {activePanel === 'participants' && <ParticipantList />}
           {activePanel === 'files'        && <FilePanel roomId={roomId} localUser={localUser} onShare={shareFile} />}

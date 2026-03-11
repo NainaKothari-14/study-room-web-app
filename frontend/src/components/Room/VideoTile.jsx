@@ -35,8 +35,14 @@ export default function VideoTile({ stream, name, avatar, isLocal, isCamOn, isMi
   const showVideo = stream && camOn
 
   useEffect(() => {
-    if (videoRef.current && stream) {
+    if (!videoRef.current) return
+    if (stream) {
+      // Always reassign — this forces the browser to rebind even if it's
+      // a new MediaStream wrapping the same underlying tracks (screen share swap)
       videoRef.current.srcObject = stream
+      videoRef.current.play().catch(() => {})
+    } else {
+      videoRef.current.srcObject = null
     }
   }, [stream])
 

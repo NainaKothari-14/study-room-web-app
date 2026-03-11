@@ -12,30 +12,27 @@ const ICE_SERVERS = {
 export function useWebRTC(roomId, userId, activeStream, localUser) {
   const { socket } = useSocketContext()
 
-  // All mutable values in refs — closures never go stale
   const socketRef       = useRef(null)
   const roomIdRef       = useRef(roomId)
   const userIdRef       = useRef(userId)
   const activeStreamRef = useRef(activeStream)
   const localUserRef    = useRef(localUser)
-  const pcsRef          = useRef({})  // { remoteUserId: RTCPeerConnection }
+  const pcsRef          = useRef({})
+  // Store each peer's incoming MediaStream so we can update it on renegotiation
+  const incomingStreamsRef = useRef({})
 
-  // remoteStreams: { userId: { stream: MediaStream, name: string, isCamOn: bool } }
   const [remoteStreams, setRemoteStreams] = useState({})
 
-  // Update refs every render — no stale closures ever
   socketRef.current       = socket
   roomIdRef.current       = roomId
   userIdRef.current       = userId
   activeStreamRef.current = activeStream
   localUserRef.current    = localUser
 
-  // ── helpers ───────────────────────────────────────────────────────────────────
-
   const upsertRemote = useCallback((uid, patch) => {
     setRemoteStreams(prev => ({
       ...prev,
-      [uid]: { isCamOn: true, name: uid, ...prev[uid], ...patch },
+      [uid]: { isCamOn: true, isMicOn: true, name: uid, ...prev[uid], ...patch },
     }))
   }, [])
 
@@ -47,64 +44,60 @@ export function useWebRTC(roomId, userId, activeStream, localUser) {
     })
   }, [])
 
-  // ── create RTCPeerConnection ──────────────────────────────────────────────────
-
-  const createPC = useCallback((remoteUserId) => {
-    pcsRef.current[remoteUserId]?.close()
+  const createPC = useCallback((peerId) => {
+    pcsRef.current[peerId]?.close()
 
     const pc = new RTCPeerConnection(ICE_SERVERS)
-    const remoteStream = new MediaStream()
+    const incomingStream = new MediaStream()
+    incomingStreamsRef.current[peerId] = incomingStream
 
     pc.onicecandidate = ({ candidate }) => {
       if (!candidate) return
       socketRef.current?.emit('webrtc:ice', {
         roomId: roomIdRef.current,
-        to: remoteUserId,
+        to: peerId,
         from: userIdRef.current,
         candidate,
       })
     }
 
     pc.ontrack = ({ track }) => {
-      const old = remoteStream.getTracks().find(t => t.kind === track.kind)
-      if (old) remoteStream.removeTrack(old)
-      remoteStream.addTrack(track)
-      upsertRemote(remoteUserId, { stream: new MediaStream(remoteStream.getTracks()) })
+      console.log(`[WebRTC] ontrack from ${peerId}: ${track.kind}`)
+      // Remove any old track of same kind
+      incomingStream.getTracks()
+        .filter(t => t.kind === track.kind)
+        .forEach(t => incomingStream.removeTrack(t))
+      incomingStream.addTrack(track)
+      // New reference forces React + video element to update
+      upsertRemote(peerId, { stream: new MediaStream(incomingStream.getTracks()) })
     }
 
     pc.onconnectionstatechange = () => {
-      console.log(`[WebRTC] ${remoteUserId}: ${pc.connectionState}`)
+      console.log(`[WebRTC] ${peerId}: ${pc.connectionState}`)
       if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
-        removeRemote(remoteUserId)
-        delete pcsRef.current[remoteUserId]
+        removeRemote(peerId)
+        delete pcsRef.current[peerId]
+        delete incomingStreamsRef.current[peerId]
       }
     }
 
     const stream = activeStreamRef.current
     if (stream) {
-      stream.getTracks().forEach(track => {
-        console.log(`[WebRTC] adding ${track.kind} track for ${remoteUserId}`)
-        pc.addTrack(track, stream)
-      })
-    } else {
-      console.warn('[WebRTC] no activeStream when createPC called for', remoteUserId)
+      stream.getTracks().forEach(t => pc.addTrack(t, stream))
     }
 
-    pcsRef.current[remoteUserId] = pc
+    pcsRef.current[peerId] = pc
     return pc
   }, [upsertRemote, removeRemote])
 
-  // ── send offer ────────────────────────────────────────────────────────────────
-
-  const callPeer = useCallback(async (remoteUserId) => {
-    console.log('[WebRTC] calling:', remoteUserId)
-    const pc = createPC(remoteUserId)
+  const callPeer = useCallback(async (peerId) => {
+    const pc = createPC(peerId)
     try {
       const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
       await pc.setLocalDescription(offer)
       socketRef.current?.emit('webrtc:offer', {
         roomId: roomIdRef.current,
-        to: remoteUserId,
+        to: peerId,
         from: userIdRef.current,
         sdp: pc.localDescription,
         name: localUserRef.current?.name,
@@ -115,33 +108,49 @@ export function useWebRTC(roomId, userId, activeStream, localUser) {
     }
   }, [createPC])
 
-  // ── replace video track on all PCs (screen share / cam restart) ───────────────
-
+  // ── THE KEY FIX ──────────────────────────────────────────────────────────────
+  // replaceTrack on sender side does NOT trigger ontrack on receiver.
+  // Solution: sender calls replaceTrack, then broadcasts 'webrtc:screen-refresh'
+  // Receivers respond by reading the LIVE track from their RTCRtpReceiver
+  // (which already has the new video data) and refreshing their MediaStream.
   const replaceVideoTrack = useCallback((stream) => {
-    const videoTrack = stream?.getVideoTracks()[0]
-    Object.values(pcsRef.current).forEach(pc => {
+    if (!stream) return
+    const videoTrack = stream.getVideoTracks()[0]
+    if (!videoTrack) return
+
+    console.log(`[WebRTC] replaceVideoTrack: "${videoTrack.label}" on ${Object.keys(pcsRef.current).length} peer(s)`)
+
+    Object.entries(pcsRef.current).forEach(([peerId, pc]) => {
       const sender = pc.getSenders().find(s => s.track?.kind === 'video')
-      if (sender && videoTrack) {
-        sender.replaceTrack(videoTrack).catch(e => console.error('[WebRTC] replaceTrack:', e))
+      if (sender) {
+        sender.replaceTrack(videoTrack)
+          .then(() => {
+            console.log(`[WebRTC] replaceTrack done for ${peerId}, broadcasting refresh signal`)
+            // Tell receivers to re-read their live track from RTCRtpReceiver
+            socketRef.current?.emit('webrtc:screen-refresh', {
+              roomId: roomIdRef.current,
+              from: userIdRef.current,
+              to: peerId,
+            })
+          })
+          .catch(e => console.error('[WebRTC] replaceTrack error:', e))
+      } else {
+        pc.addTrack(videoTrack, stream)
       }
     })
   }, [])
-
-  // ── socket listeners — registered once when socket is ready ──────────────────
 
   useEffect(() => {
     if (!socket) return
 
     const onPeerJoined = ({ peerId, name, avatar }) => {
       if (peerId === userIdRef.current) return
-      console.log('[WebRTC] peer:joined →', peerId)
-      upsertRemote(peerId, { name: name || peerId.substring(0, 8), avatar: avatar || null })
+      upsertRemote(peerId, { name: name || peerId.slice(0, 8), avatar: avatar || null })
       callPeer(peerId)
     }
 
     const onOffer = async ({ from, sdp, name, avatar }) => {
-      console.log('[WebRTC] offer from:', from)
-      upsertRemote(from, { name: name || from.substring(0, 8), avatar: avatar || null })
+      upsertRemote(from, { name: name || from.slice(0, 8), avatar: avatar || null })
       let pc = pcsRef.current[from]
       if (!pc) pc = createPC(from)
       try {
@@ -157,18 +166,14 @@ export function useWebRTC(roomId, userId, activeStream, localUser) {
           avatar: localUserRef.current?.avatar,
         })
       } catch (err) {
-        console.error('[WebRTC] answer:', err)
+        console.error('[WebRTC] answer error:', err)
       }
     }
 
     const onAnswer = async ({ from, sdp, name, avatar }) => {
       const pc = pcsRef.current[from]
       if (!pc) return
-      // Store name+avatar now that we know who answered
-      upsertRemote(from, {
-        name: name || from.substring(0, 8),
-        avatar: avatar || null,
-      })
+      upsertRemote(from, { name: name || from.slice(0, 8), avatar: avatar || null })
       try {
         if (pc.signalingState === 'have-local-offer') {
           await pc.setRemoteDescription(new RTCSessionDescription(sdp))
@@ -185,40 +190,65 @@ export function useWebRTC(roomId, userId, activeStream, localUser) {
     }
 
     const onPeerLeft = ({ peerId }) => {
-      console.log('[WebRTC] peer:left →', peerId)
       pcsRef.current[peerId]?.close()
       delete pcsRef.current[peerId]
+      delete incomingStreamsRef.current[peerId]
       removeRemote(peerId)
+    }
+
+    // Receiver side: sharer called replaceTrack and told us to refresh.
+    // Read the LIVE video track directly from our RTCRtpReceiver — it already
+    // has the new screen content flowing through it, we just need to update the
+    // MediaStream reference so React re-renders the <video> element.
+    const onScreenRefresh = ({ from }) => {
+      const pc = pcsRef.current[from]
+      if (!pc) return
+
+      const receiver = pc.getReceivers().find(r => r.track?.kind === 'video')
+      if (!receiver?.track) return
+
+      console.log(`[WebRTC] screen-refresh from ${from}, pulling live track: ${receiver.track.id.slice(0,8)}`)
+
+      const incoming = incomingStreamsRef.current[from]
+      if (incoming) {
+        // Swap in the live track
+        incoming.getVideoTracks().forEach(t => incoming.removeTrack(t))
+        incoming.addTrack(receiver.track)
+        // New MediaStream ref = React re-renders = <video> srcObject updated
+        setRemoteStreams(prev => ({
+          ...prev,
+          [from]: { ...prev[from], stream: new MediaStream(incoming.getTracks()) },
+        }))
+      }
     }
 
     const onCamState = ({ from, isCamOn, name, avatar }) => {
       upsertRemote(from, { isCamOn, ...(name && { name }), ...(avatar && { avatar }) })
     }
-
     const onMicState = ({ from, isMicOn, name, avatar }) => {
       upsertRemote(from, { isMicOn, ...(name && { name }), ...(avatar && { avatar }) })
     }
 
-    socket.on('peer:joined',   onPeerJoined)
-    socket.on('webrtc:offer',  onOffer)
-    socket.on('webrtc:answer', onAnswer)
-    socket.on('webrtc:ice',    onIce)
-    socket.on('peer:left',     onPeerLeft)
-    socket.on('cam:state',     onCamState)
-    socket.on('mic:state',     onMicState)
+    socket.on('peer:joined',          onPeerJoined)
+    socket.on('webrtc:offer',         onOffer)
+    socket.on('webrtc:answer',        onAnswer)
+    socket.on('webrtc:ice',           onIce)
+    socket.on('peer:left',            onPeerLeft)
+    socket.on('webrtc:screen-refresh', onScreenRefresh)
+    socket.on('cam:state',            onCamState)
+    socket.on('mic:state',            onMicState)
 
     return () => {
-      socket.off('peer:joined',   onPeerJoined)
-      socket.off('webrtc:offer',  onOffer)
-      socket.off('webrtc:answer', onAnswer)
-      socket.off('webrtc:ice',    onIce)
-      socket.off('peer:left',     onPeerLeft)
-      socket.off('cam:state',     onCamState)
-      socket.off('mic:state',     onMicState)
+      socket.off('peer:joined',          onPeerJoined)
+      socket.off('webrtc:offer',         onOffer)
+      socket.off('webrtc:answer',        onAnswer)
+      socket.off('webrtc:ice',           onIce)
+      socket.off('peer:left',            onPeerLeft)
+      socket.off('webrtc:screen-refresh', onScreenRefresh)
+      socket.off('cam:state',            onCamState)
+      socket.off('mic:state',            onMicState)
     }
   }, [socket, callPeer, createPC, upsertRemote, removeRemote])
-
-  // ── cleanup ───────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     return () => {

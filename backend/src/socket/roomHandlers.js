@@ -57,9 +57,9 @@ function roomHandlers(io, socket) {
   // ── WebRTC Signaling relay ───────────────────────────────────────────────────
   // The server just forwards these to the right socket — it never touches SDP.
 
-  socket.on('webrtc:offer', ({ roomId, to, from, sdp }) => {
+  socket.on('webrtc:offer', ({ roomId, to, from, sdp, name, avatar }) => {
     const target = findSocket(rooms[roomId], to)
-    if (target) io.to(target).emit('webrtc:offer', { from, sdp })
+    if (target) io.to(target).emit('webrtc:offer', { from, sdp, name, avatar })
   })
 
   socket.on('webrtc:answer', ({ roomId, to, from, sdp, name, avatar }) => {
@@ -70,6 +70,12 @@ function roomHandlers(io, socket) {
   socket.on('webrtc:ice', ({ roomId, to, from, candidate }) => {
     const target = findSocket(rooms[roomId], to)
     if (target) io.to(target).emit('webrtc:ice', { from, candidate })
+  })
+
+  // After sender calls replaceTrack, tell the receiver to re-read their RTCRtpReceiver
+  socket.on('webrtc:screen-refresh', ({ roomId, to, from }) => {
+    const target = findSocket(rooms[roomId], to)
+    if (target) io.to(target).emit('webrtc:screen-refresh', { from })
   })
 }
 
