@@ -121,21 +121,26 @@ export function useWebRTC(roomId, userId, activeStream, localUser) {
     console.log(`[WebRTC] replaceVideoTrack: "${videoTrack.label}" on ${Object.keys(pcsRef.current).length} peer(s)`)
 
     Object.entries(pcsRef.current).forEach(([peerId, pc]) => {
-      const sender = pc.getSenders().find(s => s.track?.kind === 'video')
+      // Match video senders — including ones whose track was stopped (track.readyState === 'ended')
+      const sender = pc.getSenders().find(s => s.track?.kind === 'video' || s.track?.readyState === 'ended')
+      const doRefresh = () => {
+        // Wait 400ms so bytes are flowing before receiver rebinds the video element
+        setTimeout(() => {
+          socketRef.current?.emit('webrtc:screen-refresh', {
+            roomId: roomIdRef.current,
+            from: userIdRef.current,
+            to: peerId,
+          })
+        }, 400)
+      }
       if (sender) {
         sender.replaceTrack(videoTrack)
-          .then(() => {
-            console.log(`[WebRTC] replaceTrack done for ${peerId}, broadcasting refresh signal`)
-            // Tell receivers to re-read their live track from RTCRtpReceiver
-            socketRef.current?.emit('webrtc:screen-refresh', {
-              roomId: roomIdRef.current,
-              from: userIdRef.current,
-              to: peerId,
-            })
-          })
+          .then(() => { console.log(`[WebRTC] ✓ replaceTrack for ${peerId}`); doRefresh() })
           .catch(e => console.error('[WebRTC] replaceTrack error:', e))
       } else {
+        // No video sender at all — add one (shouldn't happen if getMedia(true,true) was called)
         pc.addTrack(videoTrack, stream)
+        doRefresh()
       }
     })
   }, [])
@@ -201,25 +206,19 @@ export function useWebRTC(roomId, userId, activeStream, localUser) {
     // has the new screen content flowing through it, we just need to update the
     // MediaStream reference so React re-renders the <video> element.
     const onScreenRefresh = ({ from }) => {
-      const pc = pcsRef.current[from]
-      if (!pc) return
-
-      const receiver = pc.getReceivers().find(r => r.track?.kind === 'video')
-      if (!receiver?.track) return
-
-      console.log(`[WebRTC] screen-refresh from ${from}, pulling live track: ${receiver.track.id.slice(0,8)}`)
-
+      // replaceTrack doesn't change the track object — the same track ID
+      // carries the new content. We just need to force the <video> element
+      // to rebind by creating a fresh MediaStream wrapping the SAME tracks.
       const incoming = incomingStreamsRef.current[from]
-      if (incoming) {
-        // Swap in the live track
-        incoming.getVideoTracks().forEach(t => incoming.removeTrack(t))
-        incoming.addTrack(receiver.track)
-        // New MediaStream ref = React re-renders = <video> srcObject updated
-        setRemoteStreams(prev => ({
-          ...prev,
-          [from]: { ...prev[from], stream: new MediaStream(incoming.getTracks()) },
-        }))
-      }
+      if (!incoming) return
+
+      console.log(`[WebRTC] screen-refresh from ${from} — forcing video rebind`)
+
+      // New MediaStream object reference → VideoTile useEffect fires → srcObject reassigned
+      setRemoteStreams(prev => ({
+        ...prev,
+        [from]: { ...prev[from], stream: new MediaStream(incoming.getTracks()) },
+      }))
     }
 
     const onCamState = ({ from, isCamOn, name, avatar }) => {

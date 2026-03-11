@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { generateRoomId, generateUserId } from '../utils/roomUtils'
 import { useRoomContext } from '../context/RoomContext'
@@ -88,7 +88,71 @@ export default function LandingPage() {
   const [error, setError]       = useState('')
   const [selectedAvatar, setSelectedAvatar] = useState(null)
   const [step, setStep]         = useState(1)
-  const fileRef = useRef(null)
+  const fileRef    = useRef(null)
+  const videoRef   = useRef(null)
+  const streamRef  = useRef(null)
+
+  // Lobby state
+  const [lobbyMic, setLobbyMic] = useState(true)
+  const [lobbyCam, setLobbyCam] = useState(true)
+  const [lobbyStream, setLobbyStream] = useState(null)
+
+  // Start camera preview when entering step 3
+  useEffect(() => {
+    if (step !== 3) {
+      streamRef.current?.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+      setLobbyStream(null)
+      return
+    }
+    // Try to get camera — if denied, just show avatar (don't block the UI)
+    if (navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then(s => {
+          streamRef.current = s
+          // Apply lobby prefs to the stream
+          s.getAudioTracks().forEach(t => t.enabled = lobbyMic)
+          if (!lobbyCam) s.getVideoTracks().forEach(t => t.stop())
+          setLobbyStream(s)
+        })
+        .catch(() => {
+          setLobbyCam(false)
+          setLobbyStream(null)
+        })
+    } else {
+      setLobbyCam(false)
+      setLobbyStream(null)
+    }
+    return () => {
+      streamRef.current?.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+    }
+  }, [step])
+
+  // Toggle cam in lobby
+  const toggleLobbyCam = async () => {
+    const next = !lobbyCam
+    setLobbyCam(next)
+    if (streamRef.current) {
+      if (!next) {
+        streamRef.current.getVideoTracks().forEach(t => t.stop())
+      } else {
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+          const t = s.getVideoTracks()[0]
+          streamRef.current.getVideoTracks().forEach(old => streamRef.current.removeTrack(old))
+          streamRef.current.addTrack(t)
+          if (videoRef.current) videoRef.current.srcObject = new MediaStream(streamRef.current.getTracks())
+        } catch (_) {}
+      }
+    }
+  }
+
+  const toggleLobbyMic = () => {
+    const next = !lobbyMic
+    setLobbyMic(next)
+    streamRef.current?.getAudioTracks().forEach(t => t.enabled = next)
+  }
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0]
@@ -100,16 +164,31 @@ export default function LandingPage() {
 
   const proceed = () => {
     if (!name.trim()) return setError('Please enter your name first')
+    if (tab === 'join' && !joinCode.trim()) return setError('Please paste a room code first')
     setError(''); setStep(2)
   }
 
+  const proceedToLobby = () => setStep(3)
+
+  useEffect(() => {
+    if (videoRef.current && lobbyStream) {
+      videoRef.current.srcObject = lobbyStream
+    }
+  }, [lobbyStream])
+
   const enter = () => {
+    const trimmedName = name.trim()
+    if (!trimmedName) return setError('Please enter your name')
+    const trimmedCode = joinCode.trim()
+    if (tab === 'join' && !trimmedCode) return setError('Please paste a room code')
     const avatar = selectedAvatar || { type: 'initial', value: null }
     const userId = generateUserId()
-    const roomId = tab === 'create' ? generateRoomId() : joinCode.trim()
-    if (tab === 'join' && !roomId) return setError('Paste a room code')
+    const roomId = tab === 'create' ? generateRoomId() : trimmedCode
+    // Stop lobby preview stream before room starts its own
+    try { streamRef.current?.getTracks().forEach(t => t.stop()) } catch(_) {}
+    streamRef.current = null
     setRoomId(roomId)
-    setLocalUser({ id: userId, name: name.trim(), avatar })
+    setLocalUser({ id: userId, name: trimmedName, avatar, startMic: lobbyMic, startCam: lobbyCam })
     navigate(`/room/${roomId}`)
   }
 
@@ -183,7 +262,69 @@ export default function LandingPage() {
           padding: 32, boxShadow: '0 0 60px rgba(124,58,237,0.15)',
         }}>
 
-          {step === 1 ? (
+          {step === 3 ? (
+            <>
+              {/* ── LOBBY: camera preview + mic/cam toggles ── */}
+              <button onClick={() => setStep(2)} style={{ background: 'none', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 14, fontFamily: "'Plus Jakarta Sans',sans-serif", marginBottom: 20, display: 'flex', alignItems: 'center', gap: 6, padding: 0 }}>
+                ← Back
+              </button>
+
+              <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: 18, color: C.text, marginBottom: 4 }}>
+                Ready to join?
+              </p>
+              <p style={{ color: C.dim, fontSize: 13, fontFamily: "'Plus Jakarta Sans',sans-serif", marginBottom: 20 }}>
+                Set up your camera and microphone
+              </p>
+
+              {/* Camera preview */}
+              <div style={{ position: 'relative', background: '#18181f', borderRadius: 18, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 16, border: `1px solid ${C.border}` }}>
+                {lobbyCam && lobbyStream ? (
+                  <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
+                ) : (
+                  <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, background: 'linear-gradient(160deg,#1a1a24,#0f0f16)' }}>
+                    <div style={{ background: C.grad, padding: 2.5, borderRadius: '50%', boxShadow: '0 0 24px rgba(124,58,237,0.35)' }}>
+                      <div style={{ background: '#18181f', borderRadius: '50%', padding: 3 }}>
+                        <AvatarPreview size={64} />
+                      </div>
+                    </div>
+                    <span style={{ color: C.muted, fontSize: 12, fontFamily: "'Plus Jakarta Sans',sans-serif" }}>Camera off</span>
+                  </div>
+                )}
+                {/* Name label */}
+                <div style={{ position: 'absolute', bottom: 10, left: 12, background: 'rgba(0,0,0,0.6)', borderRadius: 8, padding: '3px 10px' }}>
+                  <span style={{ color: '#fff', fontSize: 12, fontFamily: "'Plus Jakarta Sans',sans-serif", fontWeight: 500 }}>{name} (You)</span>
+                </div>
+              </div>
+
+              {/* Toggle buttons */}
+              <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+                <button onClick={toggleLobbyMic} style={{
+                  flex: 1, padding: '12px', borderRadius: 14,
+                  border: `1.5px solid ${lobbyMic ? C.border : '#dc2626'}`,
+                  background: lobbyMic ? C.surface : 'rgba(220,38,38,0.12)',
+                  color: lobbyMic ? C.text : '#f87171',
+                  cursor: 'pointer', fontSize: 13, fontFamily: "'Plus Jakarta Sans',sans-serif",
+                  fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, transition: 'all 0.15s',
+                }}>
+                  {lobbyMic ? '🎙️ Mic On' : '🔇 Mic Off'}
+                </button>
+                <button onClick={toggleLobbyCam} style={{
+                  flex: 1, padding: '12px', borderRadius: 14,
+                  border: `1.5px solid ${lobbyCam ? C.border : '#dc2626'}`,
+                  background: lobbyCam ? C.surface : 'rgba(220,38,38,0.12)',
+                  color: lobbyCam ? C.text : '#f87171',
+                  cursor: 'pointer', fontSize: 13, fontFamily: "'Plus Jakarta Sans',sans-serif",
+                  fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, transition: 'all 0.15s',
+                }}>
+                  {lobbyCam ? '📷 Cam On' : '🚫 Cam Off'}
+                </button>
+              </div>
+
+              <GradBtn onClick={enter} style={{ width: '100%', padding: '15px 24px', fontSize: 16 }}>
+                {tab === 'create' ? '✦ Create Room' : '→ Join Room'}
+              </GradBtn>
+            </>
+          ) : step === 1 ? (
             <>
               {/* Name */}
               <div style={{ marginBottom: 20 }}>
@@ -302,7 +443,7 @@ export default function LandingPage() {
 
               {/* Actions */}
               <div style={{ display: 'flex', gap: 10 }}>
-                <button onClick={() => { setSelectedAvatar(null); enter() }} style={{
+                <button onClick={() => { setSelectedAvatar(null); proceedToLobby() }} style={{
                   flex: 1, padding: '14px', borderRadius: 14, border: `1.5px solid ${C.border}`,
                   background: 'transparent', color: C.dim, cursor: 'pointer', fontSize: 14,
                   fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, transition: 'color 0.15s, border-color 0.15s',
@@ -311,8 +452,8 @@ export default function LandingPage() {
                   onMouseLeave={e => { e.currentTarget.style.color = C.dim; e.currentTarget.style.borderColor = C.border }}>
                   Skip
                 </button>
-                <GradBtn onClick={enter} style={{ flex: 2, padding: '14px 20px', fontSize: 15 }}>
-                  {tab === 'create' ? '✦ Create Room' : '→ Join Room'}
+                <GradBtn onClick={proceedToLobby} style={{ flex: 2, padding: '14px 20px', fontSize: 15 }}>
+                  Continue →
                 </GradBtn>
               </div>
             </>

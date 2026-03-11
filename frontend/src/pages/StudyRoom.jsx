@@ -9,7 +9,7 @@ import VideoGrid from '../components/Room/VideoGrid'
 import ControlBar from '../components/Room/ControlBar'
 import ParticipantList from '../components/Room/ParticipantList'
 import ChatPanel from '../components/Chat/ChatPanel'
-import FilePanel from '../components/Files/FilePanel' 
+import FilePanel from '../components/Files/FilePanel'
 import EmojiReactions from '../components/Reactions/Emojireactions '
 import { getRoomUrl } from '../utils/roomUtils'
 
@@ -40,8 +40,20 @@ export default function StudyRoom() {
   // ── Boot: get camera first, then join ────────────────────────────────────────
   useEffect(() => {
     if (!localUser) { navigate('/'); return }
+    const wantCam = localUser.startCam !== false
+    const wantMic = localUser.startMic !== false
+    // Sync initial mic/cam state from lobby prefs
+    setIsCamOn(wantCam)
+    setIsMicOn(wantMic)
+    // Always request BOTH tracks — we need senders to exist on every peer
+    // connection so replaceTrack works for screen share later.
+    // We just disable/stop tracks after based on lobby prefs.
     getMedia(true, true).then((stream) => {
-      if (stream) setActiveStream(stream)
+      if (stream) {
+        if (!wantMic) stream.getAudioTracks().forEach(t => { t.enabled = false })
+        if (!wantCam) stream.getVideoTracks().forEach(t => { t.stop() })
+        setActiveStream(stream)
+      }
       joinRoom(roomId, localUser)
     })
     return () => { leaveRoom(roomId, localUser?.id); stopAll() }
@@ -144,9 +156,10 @@ export default function StudyRoom() {
             localStream={activeStream}
             remoteStreams={remoteStreams}
             localUser={localUser}
-            isCamOn={isScreenSharing ? true : isCamOn}
+            isCamOn={isCamOn}
             isMicOn={isMicOn}
             isScreenSharing={isScreenSharing}
+            screenSharerId={screenSharerId}
           />
           <ControlBar
             isMicOn={isMicOn}
