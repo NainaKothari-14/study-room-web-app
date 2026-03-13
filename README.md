@@ -1,7 +1,3 @@
-<div align="center">
-
-<img src="https://img.shields.io/badge/Status-In%20Development-yellow?style=for-the-badge" alt="Status" />
-
 # 📚 StudySync
 
 **Virtual study rooms for focused minds — no sign up, no downloads, just focus.**
@@ -164,8 +160,6 @@ study-room-web-app/
 
 ## 🗺 Roadmap
 
-> This project is actively being built. Here's what's planned:
-
 - [x] Multi-user WebRTC video & audio
 - [x] Screen sharing with Google Meet-style presenter layout
 - [x] PiP face/avatar overlay during screen share
@@ -175,7 +169,6 @@ study-room-web-app/
 - [x] Emoji reactions
 - [x] File sharing
 - [x] Participant list with mic/cam status indicators
-- [ ] UI polish & theming
 - [ ] Mobile responsive layout
 - [ ] Raise hand feature
 - [ ] Persistent chat history
@@ -188,7 +181,7 @@ study-room-web-app/
 
 ## 🤝 Contributing
 
-This is a solo project currently in active development. Issues and feature suggestions are very welcome — feel free to open one to start a conversation.
+Issues and feature suggestions are welcome — feel free to open one to start a conversation.
 
 ---
 
